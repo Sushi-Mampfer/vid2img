@@ -37,6 +37,8 @@ pub struct GstErrorMessage {
 pub enum StreamError {
     #[error("GST error: {0:?}")]
     GstError(GstErrorMessage),
+    #[error("state change error: {0}")]
+    StateChangeError(String),
     #[error("frame capture error")]
     FrameCaptureError,
 }
@@ -47,6 +49,9 @@ impl IntoIterator for VideoStream {
 
     fn into_iter(self) -> Self::IntoIter {
         let (sender, receiver) = sync_channel(1);
+        // Clone the sender for use inside the appsink callback so we can
+        // still use `sender` here to report startup/state-change errors.
+        let appsink_sender = sender.clone();
 
         log::debug!("Creating GStreamer Pipeline..");
         let pipeline = gst::parse_launch(
@@ -82,7 +87,9 @@ impl IntoIterator for VideoStream {
                             ("Failed to get buffer from appsink")
                         );
 
-                        if let Err(err) = sender.try_send(Err(StreamError::FrameCaptureError)) {
+                        if let Err(err) =
+                            appsink_sender.try_send(Err(StreamError::FrameCaptureError))
+                        {
                             log::error!("Could not send message in stream: {}", err)
                         }
 
@@ -103,7 +110,9 @@ impl IntoIterator for VideoStream {
                             ("Failed to map buffer readable")
                         );
 
-                        if let Err(err) = sender.try_send(Err(StreamError::FrameCaptureError)) {
+                        if let Err(err) =
+                            appsink_sender.try_send(Err(StreamError::FrameCaptureError))
+                        {
                             log::error!("Could not send message in stream: {}", err)
                         }
 
@@ -111,7 +120,7 @@ impl IntoIterator for VideoStream {
                     })?;
                     log::trace!("Frame extracted from pipeline");
 
-                    match sender.try_send(Ok(Some(buffer.to_vec()))) {
+                    match appsink_sender.try_send(Ok(Some(buffer.to_vec()))) {
                         Ok(_) => Ok(gst::FlowSuccess::Ok),
                         Err(TrySendError::Full(_)) => {
                             log::trace!("Channel is full, discarded frame");
@@ -130,10 +139,22 @@ impl IntoIterator for VideoStream {
             .get_bus()
             .expect("Pipeline without bus. Shouldn't happen!");
 
-        pipeline
-            .set_state(gst::State::Playing)
-            .expect("Cannot start pipeline");
-        log::info!("Pipeline started: {}", self.pipeline_description);
+        match pipeline.set_state(gst::State::Playing) {
+            Ok(_) => log::info!("Pipeline started: {}", self.pipeline_description),
+            Err(err) => {
+                // Instead of panicking, try to inform the iterator consumer about
+                // the error and return an iterator. The appsink callback has a
+                // cloned sender, so `sender` is still available here.
+                log::error!("Cannot start pipeline: {:?}", err);
+                let _ = sender.try_send(Err(StreamError::StateChangeError(format!("{:?}", err))));
+                return VideoStreamIterator {
+                    description: self.pipeline_description,
+                    receiver,
+                    pipeline,
+                    bus,
+                };
+            }
+        }
 
         VideoStreamIterator {
             description: self.pipeline_description,
