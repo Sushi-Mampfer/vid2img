@@ -145,8 +145,8 @@ impl IntoIterator for VideoStream {
                 // Instead of panicking, try to inform the iterator consumer about
                 // the error and return an iterator. The appsink callback has a
                 // cloned sender, so `sender` is still available here.
-                log::error!("Cannot start pipeline: {:?}", err);
-                let _ = sender.try_send(Err(StreamError::StateChangeError(format!("{:?}", err))));
+                log::error!("Cannot start pipeline: {}", err);
+                let _ = sender.try_send(Err(StreamError::StateChangeError(err.to_string())));
                 return VideoStreamIterator {
                     description: self.pipeline_description,
                     receiver,
