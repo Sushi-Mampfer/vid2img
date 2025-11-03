@@ -27,9 +27,13 @@ impl IntoIterator for FileSource {
     type IntoIter = VideoStreamIterator;
 
     fn into_iter(self) -> Self::IntoIter {
+        // Convert Windows backslashes to forward slashes and build a filesrc-based
+        // pipeline. Using `filesrc ! decodebin` is more portable on Windows where
+        // constructing a proper file:// URI can be error-prone.
+        let path_str = self.source.to_string_lossy().replace("\\", "/");
         let pipeline_description = format!(
-            "uridecodebin uri=\"file://{}\" name=src ! videoconvert ! video/x-raw,format=RGB",
-            self.source.to_string_lossy()
+            "filesrc location=\"{}\" ! decodebin ! videoconvert ! video/x-raw,format=RGB",
+            path_str
         );
         VideoStream::new(pipeline_description).into_iter()
     }
