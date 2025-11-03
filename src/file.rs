@@ -28,7 +28,7 @@ impl IntoIterator for FileSource {
 
     fn into_iter(self) -> Self::IntoIter {
         let pipeline_description = format!(
-            "uridecodebin uri=\"file://{}\" ! videoconvert ! video/x-raw,format=RGB",
+            "playbin uri=\"file://{}\" video-sink=\"videoconvert\"",
             self.source.to_string_lossy()
         );
         VideoStream::new(pipeline_description).into_iter()
